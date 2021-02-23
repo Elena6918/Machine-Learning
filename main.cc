@@ -14,159 +14,158 @@ using namespace std;
 
 struct Command {
     pid_t pid;
-    string iredir;
-    string oredir;
+    string args_in;
+    string args_out;
     vector<string> args;
 };
 
-bool isOperator(const std::string& s) {
+bool isOperator(const string &s) {
     return s == "|" || s == "<" || s == ">";
 }
 
-void parse_and_run_command(const std::string& rawCommand) {
-    istringstream s(rawCommand);
-    vector<string> tokens;
-    string _token;
-    while (s >> _token) {
-        tokens.push_back(_token);
+void redirect(int old_fd, int new_fd){
+    if(old_fd != new_fd){
+        dup2(old_fd, new_fd);
+        close(old_fd);
     }
-    int N = tokens.size();
-    if (N == 0) {
+}
+
+void parse_and_run_command(const string& init_command) {
+    istringstream s(init_command);
+    vector<string> tokens;
+    string tk;
+    while (s >> tk) {
+        tokens.push_back(tk);
+    }
+
+    int TOKEN_SIZE = tokens.size();
+    if (TOKEN_SIZE == 0) {
         return;
     }
 
-    int inRedirCount = 0, outRedirCount = 0;
+    int count_in = 0, count_out = 0;
     vector<Command> commands;
-    Command curCommand;
-    for (int i = 0; i < N; i++) {
-        auto& token = tokens[i];
+    Command temp_Command;
+    for (int i = 0; i < TOKEN_SIZE; i++) {
+        auto &token = tokens[i];
+
         if (token == "<") {
-            inRedirCount += 1;
-
-            if (inRedirCount > 1) {
-                std::cerr << "Invalid command: at most 1 input redirection can appear in your command.\n";
+            count_in += 1;
+            if (count_in > 1) {
+                cerr << "Invalid command: multiple redirection command." << endl;
                 return;
             }
-            if (i + 1 >= N || isOperator(tokens[i + 1])) {
-                std::cerr << "Invalid command: no commands after a redirection operator!\n";
+            if (i + 1 >= TOKEN_SIZE || isOperator(tokens[i + 1])) {
+                cerr << "Invalid command: need argument after a redirection operator." << endl;
                 return;
             }
-            curCommand.iredir = tokens[++i];
+            temp_Command.args_in = tokens[++i];
         } else if (token == ">") {
-            outRedirCount += 1;
-
-            if (outRedirCount > 1) {
-                std::cerr << "Invalid command: at most 1 output redirection can appear in your command.\n";
+            count_out += 1;
+            if (count_out > 1) {
+                cerr << "Invalid command: multiple redirection command." << endl;
                 return;
             }
-            if (i + 1 >= N || isOperator(tokens[i + 1])) {
-                std::cerr << "Invalid command: no commands after a redirection operator!\n";
+            if (i + 1 >= TOKEN_SIZE || isOperator(tokens[i + 1])) {
+                cerr << "Invalid command: need argument after a redirection operator." << endl;
                 return;
             }
-            curCommand.oredir = tokens[++i];
+            temp_Command.args_out = tokens[++i];
         } else if (token == "|") {
-            if (i + 1 >= N || isOperator(tokens[i + 1])) {
-                std::cerr << "Invalid command: no commands after a pipe operator!\n";
+            if (i + 1 >= TOKEN_SIZE || isOperator(tokens[i + 1])) {
+                cerr << "Invalid command: no commands after a pipe operator!\n";
                 return;
             }
 
-            if (!curCommand.args.size()) {
-                std::cerr << "Invalid command: no command name specified!\n";
+            if (!temp_Command.args.size()) {
+                cerr << "Invalid command: no command name specified!\n";
                 return;
             }
-            commands.push_back(curCommand);
-            curCommand = Command();
+            commands.push_back(temp_Command);
+            temp_Command = Command();
         } else if (token == "exit") {
             exit(0);
         } else {
-            curCommand.args.push_back(token);
+            temp_Command.args.push_back(token);
         }
     }
-    if (!curCommand.args.size()) {
-        std::cerr << "Invalid command: no command name specified!\n";
-        return;
-    }
-    commands.push_back(curCommand);
+    commands.push_back(temp_Command);
 
-    N = commands.size();
+    int N = commands.size();
 
-    // previous read and write end of the pipe
-    int pread = -1;
-    int pwrite = -1;
+    int pipe_read = -1;
+    int pipe_write = -1;
     for (int i = 0; i < N; i++) {
         auto& command = commands[i];
-
-        int pipefd[2];
+        int fd[2];
         if (i < N - 1) {
-            int r = pipe(pipefd);
-            if (r == -1) {
-                perror("Failed to pipe");
+            int res = pipe(fd);
+            if (res == -1) {
+                perror("pipe");
                 return;
             }
         }
 
-        auto pid = fork();
-        if (pid == 0) {
-            int numArgs = command.args.size();
-            vector<char*> args(numArgs + 1);
-            for (int i = 0; i < numArgs; i++) {
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork");
+            return;
+            command.pid = pid;
+        } else if (pid == 0) {
+            int arg_num = command.args.size();
+            vector<char*> args(arg_num + 1);
+            for (int i = 0; i < arg_num; i++) {
                 args[i] = (char*)command.args[i].c_str();
             }
-            args[numArgs] = NULL;
-            if (command.iredir.size()) {
-                int fd = open(command.iredir.c_str(), O_RDONLY);
+            args[arg_num] = NULL;
+
+            if (command.args_in.size()) {
+                int fd = open(command.args_in.c_str(), O_RDONLY);
                 if (fd < 0) {
                     perror("Failed to open file");
                     exit(-1);
                 }
-                dup2(fd, 0);
-                close(fd);
+                redirect(fd, 0);
             }
-            if (command.oredir.size()) {
-                int fd = open(command.oredir.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (command.args_out.size()) {
+                int fd = open(command.args_out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if (fd < 0) {
                     perror("Failed to open file");
                     exit(-1);
                 }
-                dup2(fd, 1);
-                close(fd);
+                redirect(fd, 1);
             }
-            // replace out with write end
+            
             if (i < N - 1) {
-                dup2(pipefd[1], 1);
-                close(pipefd[0]);
-                close(pipefd[1]);
+                redirect(fd[1], 1);
+                close(fd[0]);
             }
-            // replace in with read end
+            
             if (i > 0) {
-                dup2(pread, 0);
-                close(pread);
-                close(pwrite);
+                redirect(pipe_read, 0);
+                close(pipe_write);
             }
 
             execv(args[0], args.data());
-
-            perror("Error running command");
+            perror("execv");
             exit(-1);
-        } else if (pid < 0) {
-            perror("Fork failed");
-            return;
-            command.pid = pid;
         } else {
             command.pid = pid;
         }
+
         if (i > 0) {
-            close(pread);
-            close(pwrite);
+            close(pipe_read);
+            close(pipe_write);
         }
-        pread = pipefd[0];
-        pwrite = pipefd[1];
+
+        pipe_read = fd[0];
+        pipe_write = fd[1];
     }
 
-    for (auto& command : commands) {
+    for (auto &command : commands) {
         int status;
-        waitpid(command.pid, &status, 0);  // won't block if pid is -1
-        cout << command.args[0] << " exit status: " << WEXITSTATUS(status) << "\n";
+        waitpid(command.pid, &status, 0);  
+        cout << command.args[0] << " exit status: " << WEXITSTATUS(status) << endl;
     }
 }
 
