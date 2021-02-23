@@ -1,9 +1,8 @@
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
+#include <fcntl.h>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
@@ -96,19 +95,8 @@ void parse_and_run_command(const string& init_command) {
     commands.push_back(temp_Command);
 
     int N = commands.size();
-
-    int pipe_read = -1;
-    int pipe_write = -1;
     for (int i = 0; i < N; i++) {
         auto& command = commands[i];
-        int fd[2];
-        if (i < N - 1) {
-            int res = pipe(fd);
-            if (res == -1) {
-                perror("pipe");
-                return;
-            }
-        }
 
         pid_t pid = fork();
         if (pid < 0) {
@@ -144,11 +132,6 @@ void parse_and_run_command(const string& init_command) {
                 redirect(fd[1], 1);
                 close(fd[0]);
             }
-            
-            if (i > 0) {
-                redirect(pipe_read, 0);
-                close(pipe_write);
-            }
 
             execv(args[0], args.data());
             perror("execv");
@@ -156,14 +139,6 @@ void parse_and_run_command(const string& init_command) {
         } else {
             command.pid = pid;
         }
-
-        if (i > 0) {
-            close(pipe_read);
-            close(pipe_write);
-        }
-
-        pipe_read = fd[0];
-        pipe_write = fd[1];
     }
 
     for (auto &command : commands) {
